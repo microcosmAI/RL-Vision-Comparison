@@ -83,10 +83,10 @@ class CustomCNN(BaseFeaturesExtractor):
 
 
 if __name__ == "__main__":
-    """Testing with ResNet50. If a model isn't supplied in the policy_kwargs, the Xception
+    """Testing with ResNet101. If a model isn't supplied in the policy_kwargs, the Xception
         model from tf.keras.applications is used as the default model."""
 
-    ResNet50 = tf.keras.applications.ResNet101(
+    ResNet101 = tf.keras.applications.ResNet101(
         include_top=False,
         weights="imagenet",
         input_tensor=None,
@@ -97,7 +97,7 @@ if __name__ == "__main__":
 
     policy_kwargs = dict(
         features_extractor_class=CustomCNN,
-        features_extractor_kwargs=dict(features_dim=128, base_model=ResNet50, 
+        features_extractor_kwargs=dict(features_dim=128, base_model=ResNet101, 
                                        preprocessing_function=tf.keras.applications.resnet.preprocess_input),
     )
 
