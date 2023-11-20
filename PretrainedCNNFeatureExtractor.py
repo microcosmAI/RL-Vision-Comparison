@@ -10,10 +10,11 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import VecFrameStack, VecEnvWrapper, DummyVecEnv
 from stable_baselines3.common.env_util import make_atari_env
 from HParamCallback import HParamCallback
+from CustomCNN import CustomCNN
 
 device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 
-"""def hyperparam_search(lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps):
+def hyperparam_search(lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps):
     for lr in lr_values:
         for net_arch in net_arch_values:
             for batch_size in batch_size_values:
@@ -38,7 +39,7 @@ def efficient_net():
         output_dim = output.shape
     num_features = output_dim[1]
 
-    return efficient_net_model, efficient_net_weights, num_features"""
+    return efficient_net_model, efficient_net_weights, num_features
 
 class Grayscale(nn.Module):
     def __init__(self):
@@ -47,39 +48,25 @@ class Grayscale(nn.Module):
     def forward(self, img):
         return img.expand(img.shape[0], 3, *img.shape[2:])
 
-class CustomCNN(BaseFeaturesExtractor):
+class PretrainedCNNFeatureExtractor(CustomCNN):
 
-    @property
-    def features_dim(self):
-        return self._features_dim
-
-    @property
-    def model(self):
-        return self._model
-
-    @property
-    def weights(self):
-        return self._weights
-
-    @features_dim.setter
-    def features_dim(self, features_dim:int):
-        self_features_dim = features_dim
-
-    @weights.setter
+    @CustomCNN.weights.setter
     def weights(self, weights):
-        print("in weights setter")
-        self._weights = weights
+        if weights is None:
+            print("Defaulting to using ResNet50 default weights.")
+            weights = torchvision.models.ResNet50_Weights.DEFAULT
+        self._weights = weights # it doesn't seem possible to call the parent setter
+        self.preprocessing_function = weights.transforms()
 
-    @model.setter
+    @CustomCNN.model.setter
     def model(self, base_model):
-        self._model = base_model
-        print(f"Using {base_model._get_name()} as the base model.") # somehow this statement doesn't get run?
+        if base_model is None:
+            print("Defaulting to using ResNet50 model.")
+            base_model = torchvision.models.resnet50(self.weights)
+            base_model.fc = nn.Identity()
+        super().model(base_model)
 
-    @property
-    def preprocessing_function(self):
-        return self._preprocessing_function
-
-    @preprocessing_function.setter
+    @CustomCNN.preprocessing_function.setter
     def preprocessing_function(self, preprocessing_function):
         if preprocessing_function is None:
             preprocessing_function = self.weights.transforms()
@@ -91,25 +78,20 @@ class CustomCNN(BaseFeaturesExtractor):
         This corresponds to the number of units for the last layer.
     :param base_model: PyTorch model
     :param weights: PyTorch weights for the model
-    """
+    
     def __init__(self, observation_space: spaces.Box, features_dim: int, base_model = None, weights = None, preprocessing_function = None):
 
         super().__init__(observation_space, features_dim)
-        self.features_dim = features_dim
         self.weights = weights
-        print("setting model")
         self.model = base_model
-        print("model is set")
         if preprocessing_function:
             self.preprocessing_function = preprocessing_function
-        else:
-            self.preprocessing_function = lambda x : x # should this become a torch Identity?
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
         observations = observations.to(device)
         preprocessed_observations = self.preprocessing_function(observations)
         called = self.model(preprocessed_observations)
-        return called
+        return called"""
 
 
 if __name__ == "__main__":
@@ -127,7 +109,7 @@ if __name__ == "__main__":
     print(f"{num_features} output units at the end of the vision model")
 
     policy_kwargs = dict(
-        features_extractor_class=CustomCNN,
+        features_extractor_class=PretrainedCNNFeatureExtractor,
         features_extractor_kwargs=dict(features_dim=num_features, base_model=efficient_net_model, weights=efficient_net_weights,
                                        preprocessing_function=nn.Sequential(Grayscale(), efficient_net_weights.transforms())),
     )
@@ -141,3 +123,4 @@ if __name__ == "__main__":
     batch_size_values = [128]
 
     hyperparam_search(lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps)
+
