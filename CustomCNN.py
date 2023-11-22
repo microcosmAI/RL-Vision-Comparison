@@ -13,33 +13,6 @@ from HParamCallback import HParamCallback
 
 device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 
-"""def hyperparam_search(lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps):
-    for lr in lr_values:
-        for net_arch in net_arch_values:
-            for batch_size in batch_size_values:
-                model_name = f"PPO_lr{lr}_netarch{net_arch}_batchsize{batch_size}_timesteps{timesteps}"
-                print(f"Training {model_name}...")
-                policy_kwargs["net_arch"] = net_arch
-                model = PPO("CnnPolicy", fs_vec_env, verbose=1, policy_kwargs=policy_kwargs,
-                            learning_rate=lr, batch_size=batch_size, clip_range=0.1, ent_coef=0.01, 
-                            gae_lambda=0.9, gamma=0.99, max_grad_norm=0.5, n_epochs=4, 
-                            n_steps=128, vf_coef=0.5, device='cuda', tensorboard_log='runs/')
-                model.learn(timesteps, tb_log_name=model_name, callback=HParamCallback())
-                model.save(f"{model_name}.zip")
-                del model
-
-def efficient_net():
-    efficient_net_weights = torchvision.models.EfficientNet_B1_Weights.IMAGENET1K_V1
-    efficient_net_model = torchvision.models.efficientnet_b1(weights=efficient_net_weights).to(device)
-    efficient_net_model.classifier = nn.Identity()
-    rand_input = th.rand(1,3,224,224).to(device)
-    with th.no_grad():
-        output = efficient_net_model(rand_input)
-        output_dim = output.shape
-    num_features = output_dim[1]
-
-    return efficient_net_model, efficient_net_weights, num_features"""
-
 class Grayscale(nn.Module):
     def __init__(self):
         super().__init__()
@@ -50,10 +23,6 @@ class Grayscale(nn.Module):
 class CustomCNN(BaseFeaturesExtractor):
 
     @property
-    def features_dim(self):
-        return self._features_dim
-
-    @property
     def model(self):
         return self._model
 
@@ -61,13 +30,8 @@ class CustomCNN(BaseFeaturesExtractor):
     def weights(self):
         return self._weights
 
-    @features_dim.setter
-    def features_dim(self, features_dim:int):
-        self_features_dim = features_dim
-
     @weights.setter
     def weights(self, weights):
-        print("in weights setter")
         self._weights = weights
 
     @model.setter
@@ -95,7 +59,6 @@ class CustomCNN(BaseFeaturesExtractor):
     def __init__(self, observation_space: spaces.Box, features_dim: int, base_model = None, weights = None, preprocessing_function = None):
 
         super().__init__(observation_space, features_dim)
-        self.features_dim = features_dim
         self.weights = weights
         print("setting model")
         self.model = base_model
@@ -110,34 +73,3 @@ class CustomCNN(BaseFeaturesExtractor):
         preprocessed_observations = self.preprocessing_function(observations)
         called = self.model(preprocessed_observations)
         return called
-
-
-if __name__ == "__main__":
-    """Testing with EfficientNet. If a model isn't supplied in the policy_kwargs, the ResNet50
-        model is used as the default model."""
-
-    efficient_net_weights = torchvision.models.EfficientNet_B1_Weights.IMAGENET1K_V1
-    efficient_net_model = torchvision.models.efficientnet_b1(weights=efficient_net_weights).to(device)
-    efficient_net_model.classifier = nn.Identity()
-    rand_input = th.rand(1,3,224,224).to(device)
-    with th.no_grad():
-        output = efficient_net_model(rand_input)
-        output_dim = output.shape
-    num_features = output_dim[1]
-    print(f"{num_features} output units at the end of the vision model")
-
-    policy_kwargs = dict(
-        features_extractor_class=CustomCNN,
-        features_extractor_kwargs=dict(features_dim=num_features, base_model=efficient_net_model, weights=efficient_net_weights,
-                                       preprocessing_function=nn.Sequential(Grayscale(), efficient_net_weights.transforms())),
-    )
-    LOG_DIR = "./log"
-    vec_env = make_atari_env("BreakoutNoFrameskip-v4", n_envs=4)
-    fs_vec_env = VecFrameStack(vec_env, 4, channels_order='first')
-
-    timesteps = 30000
-    lr_values = [2.5e-4]
-    net_arch_values = [[128, 128]]
-    batch_size_values = [128]
-
-    hyperparam_search(lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps)
