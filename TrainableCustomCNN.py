@@ -1,18 +1,7 @@
 import torch as th
 import torch.nn as nn
 import torchvision
-from gymnasium import spaces
-from gymnasium.wrappers import FrameStack
-import gymnasium as gym
-from stable_baselines3 import PPO
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import VecFrameStack, VecEnvWrapper, DummyVecEnv
-from stable_baselines3.common.env_util import make_atari_env
-from HParamCallback import HParamCallback
 from CustomCNN import CustomCNN
-
-device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 
 class TrainableCustomCNN(CustomCNN):
 

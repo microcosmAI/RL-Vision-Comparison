@@ -1,8 +1,10 @@
-import PretrainedCNNFeatureExtractor, TrainableCustomCNN
+import PretrainedCNNFeatureExtractor, TrainableCustomCNN, VariationalAutoencoder
 import argparse
 from utils import hyperparam_search
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
+from HParamCallback import HParamCallback
+from VariationalAutoencoder import VAETrainingCallback
 
 def create_parser():
     parser = argparse.ArgumentParser(
@@ -17,6 +19,7 @@ def create_parser():
     pretrained_cnn_subparser.add_argument('network', nargs='?', default='resnet50', choices=['resnet50', 'efficientnet'])
     cnn_subparser = subparser.add_parser('cnn')
     cnn_subparser.add_argument('-nf', '--num_features', nargs='?', default=512, type=int)
+    vae_subparser = subparser.add_parser('vae')
     return parser
 
 if __name__ == "__main__":
@@ -27,6 +30,7 @@ if __name__ == "__main__":
         args.num_features = 512
 
     selected_features_extractor_class, num_features, base_model, weights, preprocessing_function = None, None, None, None, None
+    callbacks = [HParamCallback()]
 
     if args.feature_extractor == 'cnn':
         selected_features_extractor_class = TrainableCustomCNN.TrainableCustomCNN
@@ -36,6 +40,11 @@ if __name__ == "__main__":
         num_features = PretrainedCNNFeatureExtractor.NUM_FEATURES_MAP[args.network]
         base_model, weights, _ = PretrainedCNNFeatureExtractor.NETWORK_VARS_MAP[args.network]()
         preprocessing_function = PretrainedCNNFeatureExtractor.create_grayscale_preprocessing(weights)
+    elif args.feature_extractor == 'vae':
+        selected_features_extractor_class = VariationalAutoencoder.VariationalAutoencoderFeaturesExtractor
+        num_features = args.num_features
+        vae_training_callback = VAETrainingCallback()
+        callbacks.append(vae_training_callback)
     else:
         print("Unknown feature extractor type.")
 
@@ -54,4 +63,4 @@ if __name__ == "__main__":
     net_arch_values = [[128, 128]]
     batch_size_values = [128]
 
-    hyperparam_search(fs_vec_env, lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps)
+    hyperparam_search(fs_vec_env, lr_values, batch_size_values, net_arch_values, policy_kwargs, timesteps, callbacks)
