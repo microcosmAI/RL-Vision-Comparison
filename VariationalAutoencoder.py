@@ -6,6 +6,7 @@ from gymnasium import spaces
 from CustomCNN import CustomCNN
 from stable_baselines3.common.callbacks import BaseCallback
 from torch.utils.data import TensorDataset, DataLoader
+from PIL import Image
 
 device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 
@@ -26,16 +27,11 @@ class VariationalEncoder(nn.Module):
         self.kl = 0
 
     def forward(self, x):
-        x = th.flatten(x, start_dim=1)
-        print(f"flattened: {x}")
-        x = F.relu(self.linear1(x))
-        print(f"relued: {x}")
+        x = th.flatten(x, start_dim=1) # why is max sometimes a decimal less than 1?
+        x = F.sigmoid(self.linear1(x))
         mu =  self.linear2(x)
-        print(f"mu: {mu}")
         sigma = th.exp(self.linear3(x))
-        print(f"sigma: {sigma}")
         z = mu + sigma*self.N.sample(mu.shape)
-        print(f"z: {z}")
         self.kl = (sigma**2 + mu**2 - th.log(sigma) - 1/2).sum()
         return z
 
@@ -49,7 +45,7 @@ class Decoder(nn.Module):
 
     def forward(self, z):
         z = F.relu(self.linear1(z))
-        z = th.sigmoid(self.linear2(z))
+        z = th.sigmoid(self.linear2(z)) * 255
         return z.reshape((-1, self.n_channels, self.height, self.width))
 
 class VariationalAutoencoder(nn.Module):
@@ -57,12 +53,10 @@ class VariationalAutoencoder(nn.Module):
         super(VariationalAutoencoder, self).__init__()
         self.encoder = VariationalEncoder(input_dims, latent_dims)
         self.decoder = Decoder(latent_dims, input_dims)
+        self.optimizer = th.optim.Adam(self.parameters())
 
     def forward(self, x):
         z = self.encoder(x)
-        print(f"encoded: {z}")
-        #decoded = self.decoder(z)
-        #print(f"decoded: {decoded}")
         return self.decoder(z)
 
 
@@ -74,7 +68,7 @@ class VariationalAutoencoderFeaturesExtractor(CustomCNN):
     def model(self, encoder):
         if encoder is None:
             print("Defaulting to basic trainable autoencoder.")
-            print(f"obs space: {self._observation_space.shape}")
+            print(f"Observation shape: {self._observation_space.shape}")
             self.n_input_channels, self.height, self.width = self._observation_space.shape
             self.variational_autoencoder = VariationalAutoencoder((self.n_input_channels, self.height, self.width), self._features_dim)
 
@@ -103,23 +97,26 @@ class VariationalAutoencoderFeaturesExtractor(CustomCNN):
         super().__init__(observation_space, features_dim)
         self.training_buffer = []
 
-def train(autoencoder, data, epochs=20):
+def train(autoencoder, data, epochs=1):
     for param in autoencoder.parameters():
         param.requires_grad = True
-    opt = th.optim.Adam(autoencoder.parameters())
-    for epoch in range(epochs):
+    training_loss = []
+    for _ in range(epochs):
         for x in data:
             x = x[0]
             x = x.to(device, dtype=th.float32) # GPU
-            opt.zero_grad()
+            autoencoder.optimizer.zero_grad()
             x_hat = autoencoder(x)
-            loss = ((x - x_hat)**2).sum() + autoencoder.encoder.kl
+            # this was the original loss, which I've swapped out for MSE
+            #loss = ((x - x_hat)**2).sum() + autoencoder.encoder.kl
+            loss = nn.functional.mse_loss(x_hat, x) + autoencoder.encoder.kl
             loss.backward()
-            opt.step()
+            autoencoder.optimizer.step()
+            training_loss.append(loss.cpu().detach().numpy())
 
+        print("Training loss:", np.mean(training_loss))
     for param in autoencoder.parameters():
         param.requires_grad = False
-        print(param)
     return autoencoder
 
 
@@ -128,8 +125,8 @@ class VAETrainingCallback(BaseCallback):
     def _on_step(self):
         # is this the right way to access and train the encoder?
         features_extractor = self.model.policy.features_extractor
-        if len(features_extractor.training_buffer) >= 32:
-            print("Training...")
+        if len(features_extractor.training_buffer) >= 1024:
+            print("Training VAE...")
             tensor_x = th.from_numpy(np.array(features_extractor.training_buffer))
             my_dataset = TensorDataset(tensor_x)
             my_dataloader = DataLoader(my_dataset, batch_size=32)
@@ -142,3 +139,5 @@ class VAETrainingCallback(BaseCallback):
             num_concurrent = len(image)
             for i in range(num_concurrent):
                 features_extractor.training_buffer.append(image[i])
+                im = Image.fromarray(np.squeeze(image[i]))
+                im.save(f"img{i}.png")

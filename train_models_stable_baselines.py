@@ -27,7 +27,7 @@ if __name__ == "__main__":
     parser = create_parser()
     args = parser.parse_args()
     if not hasattr(args, 'num_features'): # not sure why default in subparser doesn't work when cnn isn't supplied
-        args.num_features = 512
+        args.num_features = 256
 
     selected_features_extractor_class, num_features, base_model, weights, preprocessing_function = None, None, None, None, None
     callbacks = [HParamCallback()]
@@ -55,7 +55,8 @@ if __name__ == "__main__":
                                        preprocessing_function=preprocessing_function)
     )
     LOG_DIR = "./log"
-    vec_env = make_atari_env("BreakoutNoFrameskip-v4", n_envs=4)
+    env_name = "BreakoutNoFrameskip-v4"
+    vec_env = make_atari_env(env_name, n_envs=4)
     fs_vec_env = VecFrameStack(vec_env, 4, channels_order='first')
 
     timesteps = args.timesteps

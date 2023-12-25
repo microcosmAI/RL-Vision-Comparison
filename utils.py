@@ -6,6 +6,7 @@ def hyperparam_search(env, lr_values, batch_size_values, net_arch_values, policy
         for net_arch in net_arch_values:
             for batch_size in batch_size_values:
                 model_name = f"PPO_lr{lr}_netarch{net_arch}_batchsize{batch_size}_timesteps{timesteps}"
+                model_name = model_name.replace(' ', '_')
                 print(f"Training {model_name}...")
                 policy_kwargs["net_arch"] = net_arch
                 model = PPO("CnnPolicy", env, verbose=1, policy_kwargs=policy_kwargs,
