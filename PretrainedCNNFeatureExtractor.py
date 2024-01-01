@@ -17,7 +17,8 @@ device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 # features extractor kwargs dict without hardcoding
 EFFICIENTNET_NUM_FEATURES = 1280 
 RESNET50_NUM_FEATURES = 2048
-NUM_FEATURES_MAP = {"resnet50": RESNET50_NUM_FEATURES, "efficientnet":EFFICIENTNET_NUM_FEATURES}
+SQUEEZENET1_NUM_FEATURES = 1000
+NUM_FEATURES_MAP = {"resnet50": RESNET50_NUM_FEATURES, "efficientnet":EFFICIENTNET_NUM_FEATURES, "squeezenet1": SQUEEZENET1_NUM_FEATURES}
 
 def create_grayscale_preprocessing(weights):
     return nn.Sequential(Grayscale(), weights.transforms())
@@ -47,7 +48,20 @@ def resnet50():
     print(f"Resnet 50 num features: {num_features}")
     return resnet50_model, resnet50_weights, num_features
 
-NETWORK_VARS_MAP = {"resnet50":resnet50, "efficientnet":efficientnet}
+def squeezenet1():
+    squeezenet1_weights = torchvision.models.SqueezeNet1_1_Weights.DEFAULT
+    squeezenet1_model = torchvision.models.squeezenet1_1(weights=squeezenet1_weights).to(device)
+    squeezenet1_model.fc = nn.Identity()
+    print(squeezenet1_model)
+    rand_input = th.rand(1,3,224,224).to(device)
+    with th.no_grad():
+        output = squeezenet1_model(rand_input)
+        output_dim = output.shape
+    num_features = output_dim[1]
+    print(f"Squeezenet 1 num features: {num_features}")
+    return squeezenet1_model, squeezenet1_weights, num_features
+
+NETWORK_VARS_MAP = {"resnet50":resnet50, "efficientnet":efficientnet, "squeezenet1": squeezenet1}
 
 class Grayscale(nn.Module):
     def __init__(self):
