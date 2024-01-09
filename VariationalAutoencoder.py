@@ -139,5 +139,3 @@ class VAETrainingCallback(BaseCallback):
             num_concurrent = len(image)
             for i in range(num_concurrent):
                 features_extractor.training_buffer.append(image[i])
-                im = Image.fromarray(np.squeeze(image[i]))
-                im.save(f"img{i}.png")
