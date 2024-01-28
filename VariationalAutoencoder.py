@@ -17,9 +17,10 @@ class VariationalEncoder(nn.Module):
         product = 1
         for dim in input_dims:
             product *= dim
-        self.linear1 = nn.Linear(product, 512)
-        self.linear2 = nn.Linear(512, latent_dims)
-        self.linear3 = nn.Linear(512, latent_dims)
+        self.linear1 = nn.Linear(product, 2048)
+        self.linear2 = nn.Linear(2048, 1024)
+        self.linear3 = nn.Linear(1024, latent_dims)
+        self.linear4 = nn.Linear(1024, latent_dims)
 
         self.N = th.distributions.Normal(0, 1)
         self.N.loc = self.N.loc.cuda() # hack to get sampling on the GPU
@@ -29,8 +30,9 @@ class VariationalEncoder(nn.Module):
     def forward(self, x):
         x = th.flatten(x, start_dim=1) # why is max sometimes a decimal less than 1?
         x = F.sigmoid(self.linear1(x))
-        mu =  self.linear2(x)
-        sigma = th.exp(self.linear3(x))
+        x = F.sigmoid(self.linear2(x))
+        mu =  self.linear3(x)
+        sigma = th.exp(self.linear4(x))
         z = mu + sigma*self.N.sample(mu.shape)
         self.kl = (sigma**2 + mu**2 - th.log(sigma) - 1/2).sum()
         return z
@@ -40,17 +42,21 @@ class Decoder(nn.Module):
         self.n_channels, self.height, self.width = output_dims
         self.unrolled_dim = self.n_channels * self.height * self.width
         super(Decoder, self).__init__()
-        self.linear1 = nn.Linear(latent_dims, 512)
-        self.linear2 = nn.Linear(512, self.unrolled_dim)
+        self.linear1 = nn.Linear(latent_dims, 1024)
+        self.linear2 = nn.Linear(1024, 2048)
+        self.linear3 = nn.Linear(2048, self.unrolled_dim)
 
     def forward(self, z):
         z = F.relu(self.linear1(z))
-        z = th.sigmoid(self.linear2(z)) * 255
+        z = F.relu(self.linear2(z))
+        z = th.sigmoid(self.linear3(z)) * 255
         return z.reshape((-1, self.n_channels, self.height, self.width))
 
 class VariationalAutoencoder(nn.Module):
-    def __init__(self, input_dims, latent_dims):
+    def __init__(self, input_dims, latent_dims, kl_divergence_weight=1):
         super(VariationalAutoencoder, self).__init__()
+        self.latent_dims = latent_dims
+        self.kl_divergence_weight = kl_divergence_weight
         self.encoder = VariationalEncoder(input_dims, latent_dims)
         self.decoder = Decoder(latent_dims, input_dims)
         self.optimizer = th.optim.Adam(self.parameters())
@@ -70,7 +76,7 @@ class VariationalAutoencoderFeaturesExtractor(CustomCNN):
             print("Defaulting to basic trainable autoencoder.")
             print(f"Observation shape: {self._observation_space.shape}")
             self.n_input_channels, self.height, self.width = self._observation_space.shape
-            self.variational_autoencoder = VariationalAutoencoder((self.n_input_channels, self.height, self.width), self._features_dim)
+            self.variational_autoencoder = VariationalAutoencoder((self.n_input_channels, self.height, self.width), self._features_dim, self.kl_divergence_weight)
 
             encoder = self.variational_autoencoder.encoder
 
@@ -92,8 +98,9 @@ class VariationalAutoencoderFeaturesExtractor(CustomCNN):
         self._variational_autoencoder = variational_autoencoder
 
 
-    def __init__(self, observation_space: spaces.Box, features_dim: int, base_model = None, weights = None, preprocessing_function = None):
-
+    def __init__(self, observation_space: spaces.Box, features_dim: int, base_model = None, weights = None, 
+                 preprocessing_function = None, kl_divergence_weight = 1):
+        self.kl_divergence_weight = kl_divergence_weight
         super().__init__(observation_space, features_dim)
         self.training_buffer = []
 
@@ -109,12 +116,15 @@ def train(autoencoder, data, epochs=1):
             x_hat = autoencoder(x)
             # this was the original loss, which I've swapped out for MSE
             #loss = ((x - x_hat)**2).sum() + autoencoder.encoder.kl
-            loss = nn.functional.mse_loss(x_hat, x) + autoencoder.encoder.kl
+            loss = nn.functional.mse_loss(x_hat, x) + autoencoder.kl_divergence_weight * autoencoder.encoder.kl
             loss.backward()
             autoencoder.optimizer.step()
             training_loss.append(loss.cpu().detach().numpy())
-
-        print("Training loss:", np.mean(training_loss))
+        
+        average_training_loss_over_epochs = np.mean(training_loss)
+        print("Training loss:", average_training_loss_over_epochs)
+        with open(f"vae_{autoencoder.latent_dims}_kl_weight_{autoencoder.kl_divergence_weight}_losses.txt", 'a') as f:
+            f.write(f"{average_training_loss_over_epochs}\n")
     for param in autoencoder.parameters():
         param.requires_grad = False
     return autoencoder
@@ -139,3 +149,17 @@ class VAETrainingCallback(BaseCallback):
             num_concurrent = len(image)
             for i in range(num_concurrent):
                 features_extractor.training_buffer.append(image[i])
+
+    def _on_rollout_end(self):
+        features_extractor = self.model.policy.features_extractor
+        if len(features_extractor.training_buffer) > 0:
+            input_image = features_extractor.training_buffer[0]
+            im = Image.fromarray(np.squeeze(input_image))
+            im.save(f"original_img{features_extractor._features_dim}_{features_extractor.kl_divergence_weight}.png")
+            input_image_shape = input_image.shape[1:]
+            input_tensor = th.tensor(input_image, dtype=th.float32).to(device)
+            reconstructed_image = features_extractor.variational_autoencoder(input_tensor).detach().cpu().numpy()
+            reconstructed_image = np.reshape(reconstructed_image, input_image_shape)
+            reconstructed_image = reconstructed_image.astype(np.uint8)
+            reconstructed_image = Image.fromarray(reconstructed_image)
+            reconstructed_image.save(f"reconstructed_img_{features_extractor._features_dim}_{features_extractor.kl_divergence_weight}.png")
