@@ -20,7 +20,7 @@ class Encoder(nn.Module):
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
         self.flatten = nn.Flatten()
-        self.fc = nn.Linear(128 * 16 * 16, 100)  # Adjust based on the input size
+        self.fc = nn.Linear(128 * 16 * 16, 20)  # Adjust based on the input size
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -36,7 +36,7 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
-        self.fc = nn.Linear(100, 128 * 16 * 16)
+        self.fc = nn.Linear(20, 128 * 16 * 16)
         self.conv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
         self.conv2 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
         self.conv3 = nn.ConvTranspose2d(32, 3, kernel_size=2, stride=2)
@@ -66,7 +66,7 @@ class EncoderPreprocessedObservation(gym.ObservationWrapper):
         super(EncoderPreprocessedObservation, self).__init__(env)
         self.encoder = encoder
         # You need to adjust this shape to match the output of your encoder
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(400,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(80,), dtype=np.float32)
         
     def observation(self, observation):
         # Assuming observation is numpy array, convert it to PyTorch tensor
@@ -78,46 +78,48 @@ class EncoderPreprocessedObservation(gym.ObservationWrapper):
         # Flatten the encoded observation to fit the observation space
         return encoded_obs.cpu().numpy().flatten()
 
-autoencoder = Autoencoder()
-# Load your pretrained model
-autoencoder.load_state_dict(torch.load("models/autoencoder_100.pth"))
-autoencoder.eval()
-pretrained_encoder = autoencoder.encoder
-
 # Load your environment
-env_id = "BoxingNoFrameskip-v4"
-env = gym.make(env_id, max_episode_steps=1000)
-env = FrameStack(env, num_stack=4)
-env = EncoderPreprocessedObservation(env, pretrained_encoder)
+for env_id in ["BoxingNoFrameskip-v4"]:
+    env_name = env_id.replace("/","_")
 
-# Wrap your environment with the EncoderPreprocessedObservation
-# Note: You must load or define your pretrained `encoder` before this step.
+    autoencoder = Autoencoder()
+    # Load your pretrained model
+    autoencoder.load_state_dict(torch.load(f"models/{env_name}_100.pth"))
+    autoencoder.eval()
+    pretrained_encoder = autoencoder.encoder
 
-# Because we are using a custom observation space, we might need a custom policy or feature extractor
-class CustomCNN(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
-        super(CustomCNN, self).__init__(observation_space, features_dim)
-        # Define your custom CNN based on the encoded features' shape
-        self.cnn = nn.Sequential(
-            nn.Linear(np.prod(observation_space.shape), features_dim),
-            nn.ReLU(),
-        )
+    env = gym.make(env_id, max_episode_steps=1000)
+    env = FrameStack(env, num_stack=4)
+    env = EncoderPreprocessedObservation(env, pretrained_encoder)
 
-    def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.cnn(observations)
+    # Wrap your environment with the EncoderPreprocessedObservation
+    # Note: You must load or define your pretrained `encoder` before this step.
 
-# Use the custom feature extractor in PPO's policy_kwargs
-policy_kwargs = dict(
-    features_extractor_class=CustomCNN,
-    features_extractor_kwargs=dict(features_dim=96),
-)
+    # Because we are using a custom observation space, we might need a custom policy or feature extractor
+    class CustomCNN(BaseFeaturesExtractor):
+        def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
+            super(CustomCNN, self).__init__(observation_space, features_dim)
+            # Define your custom CNN based on the encoded features' shape
+            self.cnn = nn.Sequential(
+                nn.Linear(np.prod(observation_space.shape), features_dim),
+                nn.ReLU(),
+            )
 
-policy_kwargs = dict(activation_fn=th.nn.ReLU,
-                     net_arch=dict(pi=[128, 128], vf=[128, 128]))
+        def forward(self, observations: torch.Tensor) -> torch.Tensor:
+            return self.cnn(observations)
 
-# Initialize PPO with the custom environment
-model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, tensorboard_log="./ppo_BoxingNoFrameskip/", device="mps", learning_rate=0.0001, batch_size=256)
+    # Use the custom feature extractor in PPO's policy_kwargs
+    policy_kwargs = dict(
+        features_extractor_class=CustomCNN,
+        features_extractor_kwargs=dict(features_dim=96),
+    )
 
-# Train the model
-model.learn(total_timesteps=4000000, tb_log_name="first_run")
+    policy_kwargs = dict(activation_fn=th.nn.ReLU,
+                        net_arch=dict(pi=[128, 128], vf=[128, 128]))
+
+    # Initialize PPO with the custom environment
+    model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, tensorboard_log=f"./ppo_{env_name}/", device="mps", learning_rate=0.001, batch_size=256)
+
+    # Train the model
+    model.learn(total_timesteps=4000000, tb_log_name="first_run")
 
