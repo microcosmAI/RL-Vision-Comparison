@@ -1,24 +1,24 @@
 import torch as th
 import torch.nn as nn
-import tensorflow as tf
-import keras
-from tensorflow.keras.applications.xception import preprocess_input
+import torchvision
 from gymnasium import spaces
-
+from gymnasium.wrappers import FrameStack
+import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import VecFrameStack, VecEnvWrapper, DummyVecEnv
+from stable_baselines3.common.env_util import make_atari_env
+from HParamCallback import HParamCallback
 
-def convert_image_tensor_torch_to_tf(tensor_torch: th.Tensor) -> tf.Tensor:
-    tensor_torch_permuted = tensor_torch.permute(0, 2, 3, 1)
-    np_array = tensor_torch_permuted.numpy()
-    tensor_tf = tf.convert_to_tensor(np_array)
-    return tensor_tf
+device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
 
-def convert_tensor_tf_to_torch(tensor_tf: tf.Tensor) -> th.Tensor:
-    tensor_np = tensor_tf.numpy()
-    tensor_torch = th.from_numpy(tensor_np)
-    return tensor_torch
+class Grayscale(nn.Module):
+    def __init__(self):
+        super().__init__()
 
+    def forward(self, img):
+        return img.expand(img.shape[0], 3, *img.shape[2:])
 
 class CustomCNN(BaseFeaturesExtractor):
 
@@ -26,28 +26,18 @@ class CustomCNN(BaseFeaturesExtractor):
     def model(self):
         return self._model
 
+    @property
+    def weights(self):
+        return self._weights
+
+    @weights.setter
+    def weights(self, weights):
+        self._weights = weights
+
     @model.setter
     def model(self, base_model):
-        if base_model is None:
-            print("Defaulting to using Xception model.")
-            base_model = tf.keras.applications.Xception(
-                include_top=False,
-                input_shape=(299,299,3),
-                weights="imagenet",
-                input_tensor=None,
-                pooling=None,
-                classes=1000,
-                classifier_activation="softmax",
-            )
-        base_model.trainable = False
-
-        inputs = keras.Input(shape=(299, 299, 3))
-        with_inputs = base_model(inputs, training=False)
-        with_pooling = keras.layers.GlobalAveragePooling2D()(with_inputs)
-        outputs = keras.layers.Dense(self.features_dim, activation='relu')(with_pooling)
-
-        self._model = keras.Model(inputs, outputs)
-        print(f"Using {base_model.name} as the base model.")
+        self._model = base_model
+        print(f"Using {base_model._get_name()} as the base model.") # somehow this statement doesn't get run?
 
     @property
     def preprocessing_function(self):
@@ -56,51 +46,30 @@ class CustomCNN(BaseFeaturesExtractor):
     @preprocessing_function.setter
     def preprocessing_function(self, preprocessing_function):
         if preprocessing_function is None:
-            preprocessing_function = tf.keras.applications.xception.preprocess_input
+            preprocessing_function = self.weights.transforms()
         self._preprocessing_function = preprocessing_function
-        print(f"Using {preprocessing_function.__qualname__} as preprocessing function.")
 
     """
     :param observation_space: (gym.Space)
     :param features_dim: (int) Number of features extracted.
-        This corresponds to the number of unit for the last layer.
+        This corresponds to the number of units for the last layer.
+    :param base_model: PyTorch model
+    :param weights: PyTorch weights for the model
     """
-    def __init__(self, observation_space: spaces.Box, features_dim: int = 256, base_model = None, preprocessing_function = None):
+    def __init__(self, observation_space: spaces.Box, features_dim: int, base_model = None, weights = None, preprocessing_function = None):
 
         super().__init__(observation_space, features_dim)
-
+        self.weights = weights
+        print("setting model")
         self.model = base_model
-
-        self.preprocessing_function = preprocessing_function
+        print("model is set")
+        if preprocessing_function:
+            self.preprocessing_function = preprocessing_function
+        else:
+            self.preprocessing_function = lambda x : x # should this become a torch Identity?
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
-        observations_tf = convert_image_tensor_torch_to_tf(observations)
-        resized_observations = tf.image.resize(observations_tf, [299, 299])
-        preprocessed_observations = self.preprocessing_function(resized_observations)
+        observations = observations.to(device)
+        preprocessed_observations = self.preprocessing_function(observations)
         called = self.model(preprocessed_observations)
-        called_torch = convert_tensor_tf_to_torch(called)
-        return called_torch
-
-
-if __name__ == "__main__":
-    """Testing with ResNet50. If a model isn't supplied in the policy_kwargs, the Xception
-        model from tf.keras.applications is used as the default model."""
-
-    ResNet50 = tf.keras.applications.ResNet101(
-        include_top=False,
-        weights="imagenet",
-        input_tensor=None,
-        input_shape=(299,299,3),
-        pooling=None,
-        classes=1000
-    )
-
-    policy_kwargs = dict(
-        features_extractor_class=CustomCNN,
-        features_extractor_kwargs=dict(features_dim=128, base_model=ResNet50, 
-                                       preprocessing_function=tf.keras.applications.resnet.preprocess_input),
-    )
-
-    model = PPO("CnnPolicy", "BreakoutNoFrameskip-v4", policy_kwargs=policy_kwargs, verbose=1)
-    model.learn(4000)
-    model.save("4ktimesteps.zip")
+        return called
