@@ -11,6 +11,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 import torch.nn.functional as F
 from PIL import Image
 import torch as th
+import os
 
 def reparameterize(mu, logvar):
     std = torch.exp(0.5*logvar)
@@ -25,8 +26,8 @@ class Encoder(nn.Module):
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
         self.flatten = nn.Flatten()
-        self.fc_mu = nn.Linear(128 * 16 * 16, 100)  # For mean
-        self.fc_logvar = nn.Linear(128 * 16 * 16, 100)  # For log variance
+        self.fc_mu = nn.Linear(128 * 16 * 16, 300)  # For mean
+        self.fc_logvar = nn.Linear(128 * 16 * 16, 300)  # For log variance
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -47,7 +48,7 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
-        self.fc = nn.Linear(100, 128 * 16 * 16)
+        self.fc = nn.Linear(300, 128 * 16 * 16)
         self.conv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
         self.conv2 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
         self.conv3 = nn.ConvTranspose2d(32, 3, kernel_size=2, stride=2)
@@ -77,7 +78,7 @@ class EncoderPreprocessedObservation(gym.ObservationWrapper):
         super(EncoderPreprocessedObservation, self).__init__(env)
         self.encoder = encoder
         # You need to adjust this shape to match the output of your encoder
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(200,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(600,), dtype=np.float32)
         
     def observation(self, observation):
         # Assuming observation is numpy array, convert it to PyTorch tensor
@@ -89,46 +90,47 @@ class EncoderPreprocessedObservation(gym.ObservationWrapper):
         # Flatten the encoded observation to fit the observation space
         return encoded_obs.cpu().numpy().flatten()
 
-autoencoder = VAE()
-# Load your pretrained model
-autoencoder.load_state_dict(torch.load("models/vae_100.pth"))
-autoencoder.eval()
-pretrained_encoder = autoencoder.encoder
 
-# Load your environment
-env_id = "BoxingNoFrameskip-v4"
-env = gym.make(env_id, max_episode_steps=1000)
-env = FrameStack(env, num_stack=2)
-env = EncoderPreprocessedObservation(env, pretrained_encoder)
+models = os.listdir("models")
+models = [model for model in models if "vae" in model]
 
-# Wrap your environment with the EncoderPreprocessedObservation
-# Note: You must load or define your pretrained `encoder` before this step.
+for model in models:
 
-# Because we are using a custom observation space, we might need a custom policy or feature extractor
-class CustomCNN(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
-        super(CustomCNN, self).__init__(observation_space, features_dim)
-        # Define your custom CNN based on the encoded features' shape
-        self.cnn = nn.Sequential(
-            nn.Linear(np.prod(observation_space.shape), features_dim),
-            nn.ReLU(),
-        )
+    autoencoder = VAE()
+    # Load your pretrained model
+    autoencoder.load_state_dict(torch.load("models/" + model))
+    autoencoder.eval()
+    pretrained_encoder = autoencoder.encoder
 
-    def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.cnn(observations)
+    # Load your environment
+    env_id = model.split("_vae")[0]
+    env_id = env_id.replace("_","/")
+    env = gym.make(env_id, max_episode_steps=1000)
+    env = FrameStack(env, num_stack=2)
+    env = EncoderPreprocessedObservation(env, pretrained_encoder)
 
-# Use the custom feature extractor in PPO's policy_kwargs
-policy_kwargs = dict(
-    features_extractor_class=CustomCNN,
-    features_extractor_kwargs=dict(features_dim=96),
-)
+    # Wrap your environment with the EncoderPreprocessedObservation
+    # Note: You must load or define your pretrained `encoder` before this step.
 
-policy_kwargs = dict(activation_fn=th.nn.ReLU,
-                     net_arch=dict(pi=[128, 128], vf=[128, 128]))
+    # Because we are using a custom observation space, we might need a custom policy or feature extractor
+    class CustomCNN(BaseFeaturesExtractor):
+        def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
+            super(CustomCNN, self).__init__(observation_space, features_dim)
+            # Define your custom CNN based on the encoded features' shape
+            self.cnn = nn.Sequential(
+                nn.Linear(np.prod(observation_space.shape), features_dim),
+                nn.ReLU(),
+            )
 
-# Initialize PPO with the custom environment
-model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, tensorboard_log="./ppo_BoxingNoFrameskip_vae/", device="mps", learning_rate=0.0001, batch_size=256)
+        def forward(self, observations: torch.Tensor) -> torch.Tensor:
+            return self.cnn(observations)
 
-# Train the model
-model.learn(total_timesteps=4000000, tb_log_name="first_run")
+    policy_kwargs = dict(activation_fn=th.nn.ReLU,
+                        net_arch=dict(pi=[128, 128], vf=[128, 128]))
+
+    # Initialize PPO with the custom environment
+    model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, tensorboard_log=f"./training/", device="mps", learning_rate=0.0001, batch_size=32)
+
+    # Train the model
+    model.learn(total_timesteps=4000000, tb_log_name=f"env_name_{env_id}_vae_final_run")
 

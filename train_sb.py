@@ -80,6 +80,7 @@ class EncoderPreprocessedObservation(gym.ObservationWrapper):
 
 # Load your environment
 for env_id in ["BoxingNoFrameskip-v4"]:
+    env_id = env_id.split("_vae")[0]
     env_name = env_id.replace("/","_")
 
     autoencoder = Autoencoder()
@@ -118,8 +119,8 @@ for env_id in ["BoxingNoFrameskip-v4"]:
                         net_arch=dict(pi=[128, 128], vf=[128, 128]))
 
     # Initialize PPO with the custom environment
-    model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, tensorboard_log=f"./ppo_{env_name}/", device="mps", learning_rate=0.001, batch_size=256)
+    model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, tensorboard_log=f"./training/", device="mps", learning_rate=0.0001, batch_size=256)
 
     # Train the model
-    model.learn(total_timesteps=4000000, tb_log_name="first_run")
+    model.learn(total_timesteps=4000000, tb_log_name=f"env_name_{env_name}_first_run")
 
