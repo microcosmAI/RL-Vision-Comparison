@@ -35,8 +35,8 @@ wandb_entity = None  # the entity (team) of wandb's project
 capture_video = False  # whether to capture videos of the agent performances (check out `videos` folder)
 
 # Algorithm specific arguments
-env_id = "SkiingNoFrameskip-v4"  # the id of the environment
-path = "autoencoder/models/SkiingNoFrameskip-v4_vae_100.pth"  # the path to the autoencoder model
+env_id = "BreakoutNoFrameskip-v4"  # the id of the environment
+path = "autoencoder/models/BreakoutNoFrameskip-v4_vae_100.pth"  # the path to the autoencoder model
 total_timesteps = 3000000  # total timesteps of the experiments
 learning_rate = 2.5e-4  # the learning rate of the optimizer
 num_envs = 16  # the number of parallel game environments
